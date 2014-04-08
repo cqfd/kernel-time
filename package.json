@@ -1,0 +1,12 @@
+{
+  "name": "Kernel Time",
+  "main": "index.html",
+  "window": {
+    "toolbar": true,
+    "width": 962,
+    "height": 600,
+    "min_width": 962,
+    "min_height": 600,
+    "resizable": true
+  }
+}

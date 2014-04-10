@@ -1,5 +1,5 @@
 {
-  "name": "Kernel Time",
+  "name": "kernel-time",
   "main": "index.html",
   "window": {
     "toolbar": true,
@@ -8,5 +8,9 @@
     "min_width": 962,
     "min_height": 600,
     "resizable": true
+  },
+  "dependencies": {
+    "torrent-stream": "*",
+    "request": "*"
   }
 }

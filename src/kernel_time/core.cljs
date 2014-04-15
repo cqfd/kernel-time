@@ -3,6 +3,7 @@
   (:require [cljs.nodejs :as n]
             [om.core :as om :include-macros true]
             [om.dom :as dom :include-macros true]
+            [ajax.core :refer [GET]]
             [cljs.core.async :refer [put! chan <! timeout]]))
 
 (enable-console-print!)
@@ -10,50 +11,94 @@
 (def t (n/require "torrent-stream"))
 (def http (n/require "http"))
 (def pump (n/require "pump"))
+(def range-parser (n/require "range-parser"))
 
-(def app-state (atom {:src nil}))
+(def app-state (atom {:src nil
+                      :list []
+                      :idx 0}))
 
-(def magnet "magnet:?xt=urn:btih:8C5043DF1A8FEC9F7FDDDA70617C6BB96E14E6CC&dn=game+of+thrones+s04e01+hdtv+x264+killers+ettv&tr=http%3A%2F%2Ftracker.ex.ua%2Fannounce&tr=udp%3A%2F%2Fopen.demonii.com%3A1337")
-
-(defn torrent->stream [torrent]
-  (let [ch (chan)
-        engine (t torrent)]
-    (.on engine "ready"
-         (fn []
-           (let [f (aget (.-files engine) 1)]
-             (. js/console dir f)
-             (put! ch (.createReadStream f)))))
+(defn yts [params]
+  (let [ch (chan)]
+    (GET "http://yts.re/api/list.json"
+         {:params params
+          :handler (partial put! ch)})
     ch))
 
-(defn serve [torrent]
-  (go (let [stream (<! (torrent->stream torrent))
-            server (.createServer http
-                                  (fn [_req res]
-                                    (pump stream res
-                                          (fn [err]
-                                            (.dir js/console err)))))]
-        (.on server "close" (fn [& rest]
-                              (println "server closed!")))
-        (.listen server 8880)
-        (println "Listening...")
-        (swap! app-state update-in [:src] (fn [_] "http://127.0.0.1:8880/"))
-        )))
+(def magnet "magnet:?xt=urn:btih:C922A6BD4DC2FD9B50CF2BC91F35B9DB8009600E&dn=house+of+cards+2013+s02e01+webrip+hdtv+x264+2hd+rartv&tr=udp%3A%2F%2Ftracker.openbittorrent.com%3A80%2Fannounce&tr=udp%3A%2F%2Fopen.demonii.com%3A1337")
 
-(serve magnet)
+(defn torrent->f [torrent]
+  (let [ch (chan) engine (t torrent)]
+    (.on engine "ready" (fn []
+                          (println (.-length (.-files engine)))
+                          (put! ch (aget (.sort (.-files engine)
+                                                (fn [a b] (- (.-length b) (.-length a))))
+                                         0))))
+    ch))
 
-(go (while true
-      (<! (timeout 2000))
-      (println "Tick...")))
+(defn handle-f [f]
+  (fn [req res]
+    (let [range (aget (range-parser (.-length f) (.-range (.-headers req))) 0)
+          content-length (+ 1 (- (.-end range) (.-start range)))
+          content-range (str "bytes " (.-start range) "-" (.-end range) "/" (.-length f))]
+      (println "Handling a request!")
+      (set! (.-statusCode res) 206)
+      (.setHeader res "Accept-Ranges" "bytes")
+      (.setHeader res "Content-Length" content-length)
+      (.setHeader res "Content-Range" content-range)
+      (pump (.createReadStream f range) res))))
 
-(defn video-widget [data owner]
+;; Maybe this would be better for the component to maintain some
+;; internal state for the video source? Real data = magnet link?
+
+(def counter (atom 0))
+
+;; {magnet f}
+(defn video-widget [app owner]
   (reify
+    om/IWillMount
+    (will-mount [_]
+      (go (let [server (.createServer http)
+                _gross (<! (timeout 6000))]
+            (.on server "request"
+                 (fn [req res]
+                   (go (let [movie ((:list @app) (:idx @app))
+                             f (<! (torrent->f (:magnet movie)))]
+                         ((handle-f f) req res)))))
+            (.listen server 9193)
+            (om/transact! app :src (fn [_] (str "http://127.0.0.1:9193"))))))
     om/IRender
     (render [this]
-      (dom/video #js {"src" (:src data) "controls" true}))))
+      (swap! counter inc)
+      (println "Rerendering the video widget..." @counter)
+      (dom/div nil
+        (dom/video #js {"src" (:src app) "controls" true})))))
+
+(defn movie-list [app owner]
+  (reify
+    om/IWillMount
+    (will-mount [this]
+      (go (let [resp (<! (yts {:limit 2 :sort "seeds"}))
+                movies (resp "MovieList")]
+            (om/update! app :list (vec (map (fn [m] {:title (m "MovieTitleClean")
+                                                     :magnet (m "TorrentMagnetUrl")}) movies))))))
+    om/IRender
+    (render [this]
+      (println app)
+      (apply dom/ul nil
+             (map-indexed (fn [i movie]
+                            (dom/li #js {:className (when (= i (:idx app)) "selected")
+                                         :onClick (fn [e]
+                                                    (println "Handling click!")
+                                                    (om/update! app :idx i))}
+                                    (:title movie)))
+                          (:list app))))))
 
 (om/root
-  (fn [app owner]
-    (dom/div nil
-      (om/build video-widget app)))
+  video-widget
   app-state
   {:target (. js/document (getElementById "app"))})
+
+(om/root
+  movie-list
+  app-state
+  {:target (. js/document (getElementById "list"))})

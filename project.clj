@@ -4,8 +4,9 @@
 
   :dependencies [[org.clojure/clojure "1.5.1"]
                  [org.clojure/clojurescript "0.0-2197"]
-                 [org.clojure/core.async "0.1.267.0-0d7780-alpha"]
-                 [om "0.5.3"]]
+                 [org.clojure/core.async "0.1.278.0-76b25b-alpha"]
+                 [om "0.5.3"]
+                 [cljs-ajax "0.2.3"]]
 
   :plugins [[lein-cljsbuild "1.0.3"]]
 
@@ -17,5 +18,4 @@
               :compiler {
                 :output-to "kernel_time.js"
                 :output-dir "out"
-                :optimizations :none
-                :source-map true}}]})
+                :optimizations :none}}]})

@@ -12,6 +12,7 @@
   "dependencies": {
     "torrent-stream": "*",
     "request": "*",
-    "pump": "*"
+    "pump": "*",
+    "range-parser": "*"
   }
 }

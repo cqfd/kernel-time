@@ -1,7 +1,7 @@
 (ns kernel-time.core
   (:require-macros [cljs.core.async.macros :refer [go]])
-  (:require [ajax.core :refer [GET]]
-            [cljs.core.async :refer [put! chan <! timeout]]
+  (:require [kernel-time.search :refer [search]]
+            [cljs.core.async :refer [<! chan put! sliding-buffer timeout]]
             [cljs.nodejs :as n]
             [om.core :as om :include-macros true]
             [om.dom :as dom :include-macros true]))
@@ -15,12 +15,22 @@
 (def range-parser (n/require "range-parser"))
 (def url (n/require "url"))
 
-(def app-state (atom {:list [] :idx 0}))
+(def app-state (atom {:movies [] :idx 0}))
 
-(defn yts [params]
-  (let [ch (chan)]
-    (GET "http://yts.re/api/list.json" {:params params :handler (partial put! ch)})
-    ch))
+(defn tick [ms]
+  (let [out (chan (sliding-buffer 1))]
+    (go (while true 
+          (<! (timeout ms))
+          (>! out :tick)))
+    out))
+
+(defn throttle [t c]
+  (let [out (chan)]
+    (go (loop [throttled true]
+          (if throttled
+            (do (<! t) (recur false))
+            (do (>! out (<! c)) (recur true)))))
+    out))
 
 (defn torrent->f [torrent]
   (let [ch (chan)
@@ -50,8 +60,8 @@
   (reify
     om/IRender
     (render [this]
-      (if (> (count (:list data)) 0)
-        (let [movie ((:list data) (:idx data))
+      (if (> (count (:movies data)) 0)
+        (let [movie ((:movies data) (:idx data))
               magnet (:magnet movie)
               src (str "http://127.0.0.1:8082/?" (.stringify qs #js {:magnet magnet}))]
           (dom/video #js {"src" src "controls" true}))
@@ -65,21 +75,23 @@
              (map-indexed (fn [i movie]
                             (dom/li #js {:className (when (= i (:idx data)) "selected")
                                          :onClick (fn [e] (om/update! data :idx i))}
-                                    (:title movie)))
-                          (:list data))))))
+                                    (dom/img #js {:src (:image movie)})))
+                          (:movies data))))))
 
 (om/root
   (fn [app owner]
     (reify
+     om/IInitState
+     (init-state [_]
+       {:text ""
+        :query (chan (sliding-buffer 1))})
       om/IWillMount
       (will-mount [_]
-        ; start the server
+        ;; start the server
         (go (let [server (.createServer http)
                   magnet->f (atom {})]
               (.on server "request"
                    (fn [req res]
-                     ; url.parse(req.url).query
-                     ; (.. url (parse (.-url req)) -query)
                      (let [params (.-query (.parse url (.-url req) true))
                            magnet (.-magnet params)
                            f (@magnet->f magnet)]
@@ -89,14 +101,21 @@
                                (swap! magnet->f assoc magnet f)
                                ((handle-f f) req res)))))))
               (.listen server 8082)))
-        ; fetch some torrents
-        (go (let [resp (<! (yts {:limit 2 :sort "seeds"}))
-                  movies (resp "MovieList")]
-              (om/update! app :list (vec (map (fn [m] {:title (m "MovieTitleClean")
-                                                       :magnet (m "TorrentMagnetUrl")}) movies))))))
-      om/IRender
-      (render [_]
+        ;; watch the search box
+        (let [state (om/get-state owner)
+              query (throttle (tick 2000) (:query state))]
+          (go (while true
+                (let [movies (<! (search {:limit 20 :sort "seeds" :keywords (<! query)}))]
+                  (println "Movies!" movies)
+                  (om/update! app :movies movies))))))
+      om/IRenderState
+      (render-state [this state]
         (dom/div nil
+         (dom/input #js {:type "text"
+                         :value (:text state)
+                         :onChange (fn [e]
+                                     (om/set-state! owner :text (.. e -target -value))
+                                     (put! (:query state) (.. e -target -value)))})
           (om/build video-widget app)
           (om/build movie-list app)))))
   app-state

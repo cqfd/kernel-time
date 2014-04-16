@@ -75,7 +75,8 @@
              (map-indexed (fn [i movie]
                             (dom/li #js {:className (when (= i (:idx data)) "selected")
                                          :onClick (fn [e] (om/update! data :idx i))}
-                                    (dom/img #js {:src (:image movie)})))
+                                    (dom/img #js {:src (:image movie)})
+                                    (dom/h2 nil (:title movie))))
                           (:movies data))))))
 
 (om/root

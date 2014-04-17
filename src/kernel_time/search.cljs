@@ -49,14 +49,20 @@
 
 (def trakt-key "4e3c6770d8c44fa6775720ba3014dc84")
 
-(defn trakt-summaries [imdbs]
-  (let [out (chan)]
-    (let [url (str "http://api.trakt.tv/movie/summaries.json"
-                   "/"
-                   trakt-key
-                   "/"
-                   (join "," imdbs))]
-       (GET url {:handler (partial put! out)}))
+(defn trakt-movie-summaries [imdbs]
+  (let [out (chan)
+        url (str "http://api.trakt.tv/movie/summaries.json"
+                 "/"
+                 trakt-key
+                 "/"
+                 (join "," imdbs))]
+    (GET url {:handler (partial put! out)})
+    out))
+
+(defn trakt-trending-shows []
+  (let [out (chan)
+        url (str "http://api.trakt.tv/shows/trending.json/" trakt-key)]
+    (GET url {:handler (partial put! out)})
     out))
 
 (defn search [params]

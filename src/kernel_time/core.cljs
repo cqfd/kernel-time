@@ -67,6 +67,20 @@
           (dom/video #js {"src" src "controls" true}))
         (dom/div nil)))))
 
+(defn star-list [stars owner]
+  (reify
+    om/IRender
+    (render [this]
+      (let [num-half-stars (int (* 2 stars))
+            num-whole-stars (int (/ num-half-stars 2))
+            extra-half (mod num-half-stars 2)]
+        (dom/div #js {:className "star-list"}
+          (dom/span nil stars)
+          (apply dom/div nil
+            (into (list (if (= extra-half 1) (dom/img #js {:src "assets/img/halfstar.png"})))
+                  (repeatedly num-whole-stars
+                    #(dom/img #js {:src "assets/img/star.png"})))))))))
+
 (defn movie-list [data owner]
   (reify
     om/IRender
@@ -76,7 +90,8 @@
                             (dom/li #js {:className (when (= i (:idx data)) "selected")
                                          :onClick (fn [e] (om/update! data :idx i))}
                                     (dom/img #js {:src (:image movie)})
-                                    (dom/h2 nil (:title movie))))
+                                    (dom/h2 nil (:title movie))
+                                    (om/build star-list (:rating movie))))
                           (:movies data))))))
 
 (om/root

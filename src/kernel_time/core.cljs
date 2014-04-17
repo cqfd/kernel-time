@@ -1,6 +1,6 @@
 (ns kernel-time.core
   (:require-macros [cljs.core.async.macros :refer [go]])
-  (:require [kernel-time.search :refer [search]]
+  (:require [kernel-time.search :refer [kickass search]]
             [cljs.core.async :refer [<! chan put! sliding-buffer timeout]]
             [cljs.nodejs :as n]
             [om.core :as om :include-macros true]
@@ -15,7 +15,7 @@
 (def range-parser (n/require "range-parser"))
 (def url (n/require "url"))
 
-(def app-state (atom {:movies [] :idx 0}))
+(def app-state (atom {:movies [] :idx nil}))
 
 (defn tick [ms]
   (let [out (chan (sliding-buffer 1))]
@@ -60,10 +60,10 @@
   (reify
     om/IRender
     (render [this]
-      (if (> (count (:movies data)) 0)
+      (if (:idx data)
         (let [movie ((:movies data) (:idx data))
               magnet (:magnet movie)
-              src (str "http://127.0.0.1:8082/?" (.stringify qs #js {:magnet magnet}))]
+              src (str "http://127.0.0.1:8080/?" (.stringify qs #js {:magnet magnet}))]
           (dom/video #js {"src" src "controls" true}))
         (dom/div nil)))))
 
@@ -75,7 +75,7 @@
              (map-indexed (fn [i movie]
                             (dom/li #js {:className (when (= i (:idx data)) "selected")
                                          :onClick (fn [e] (om/update! data :idx i))}
-                                    (dom/img #js {:src (:image movie)})))
+                                    (:title movie)))
                           (:movies data))))))
 
 (om/root
@@ -85,8 +85,8 @@
      (init-state [_]
        {:text ""
         :query (chan (sliding-buffer 1))})
-      om/IWillMount
-      (will-mount [_]
+      ;om/IWillMount
+      #_(will-mount [_]
         ;; start the server
         (go (let [server (.createServer http)
                   magnet->f (atom {})]
@@ -100,23 +100,22 @@
                          (go (let [f (<! (torrent->f magnet))]
                                (swap! magnet->f assoc magnet f)
                                ((handle-f f) req res)))))))
-              (.listen server 8082)))
+              (.listen server 8080)))
         ;; watch the search box
-        (let [state (om/get-state owner)
+        #_(let [state (om/get-state owner)
               query (throttle (tick 2000) (:query state))]
           (go (while true
-                (let [movies (<! (search {:limit 20 :sort "seeds" :keywords (<! query)}))]
-                  (println "Movies!" movies)
+                (let [movies (<! (search {:limit 20 :sort "seeds" :query (<! query)}))]
                   (om/update! app :movies movies))))))
       om/IRenderState
       (render-state [this state]
         (dom/div nil
-         (dom/input #js {:type "text"
-                         :value (:text state)
-                         :onChange (fn [e]
-                                     (om/set-state! owner :text (.. e -target -value))
-                                     (put! (:query state) (.. e -target -value)))})
-          (om/build video-widget app)
-          (om/build movie-list app)))))
+          (dom/input #js {:type "text"
+                          :value (:text state)
+                          :onChange (fn [e]
+                                      (om/set-state! owner :text (.. e -target -value))
+                                      (put! (:query state) (.. e -target -value)))})
+          #_(om/build video-widget app)
+          #_(om/build movie-list app)))))
   app-state
   {:target (. js/document (getElementById "app"))})

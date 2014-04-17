@@ -13,6 +13,7 @@
     "torrent-stream": "*",
     "request": "*",
     "pump": "*",
-    "range-parser": "*"
+    "range-parser": "*",
+    "node-kickass": "*"
   }
 }

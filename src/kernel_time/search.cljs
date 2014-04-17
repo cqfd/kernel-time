@@ -2,7 +2,31 @@
   (:require-macros [cljs.core.async.macros :refer [go]])
   (:require [ajax.core :refer [GET]]
             [cljs.core.async :refer [<! >! chan put!]]
+            [cljs.nodejs :as n]
             [clojure.string :refer [join]]))
+
+;; yuck
+(extend-type array
+  ISeqable
+  (-seq [this] (array-seq this 0)))
+
+(def K (n/require "node-kickass"))
+
+(defn kickass->show [j]
+  {:title (-> j (aget "title"))
+   :seeds (-> j (aget "torrent:seeds") (aget "#"))
+   :peers (-> j (aget "torrent:peers") (aget "#"))
+   :hash (-> j (aget "torrent:infohash") (aget "#"))
+   :magnet (-> j (aget "torrent:magneturi") (aget "#"))})
+
+(defn kickass [params]
+  (let [out (chan)]
+    (-> (K.)
+        (.setQuery (:query params))
+        (.setPage (:page params))
+        (.run (fn [errors data]
+                (put! out (mapv kickass->show data)))))
+    out))
 
 (defn yts->movie [j]
   {:title (j "MovieTitleClean")
@@ -16,7 +40,10 @@
 (defn yts [params]
   (let [ch (chan)]
     (GET "http://yts.re/api/list.json"
-         {:params params
+         {:params {:keywords (:query params)
+                   :limit (:limit params)
+                   :sort (:sort params)
+                   :set (+ 1 (:page params))}
           :handler (fn [resp] (put! ch (map yts->movie (resp "MovieList"))))})
     ch))
 
@@ -33,10 +60,11 @@
     out))
 
 (defn search [params]
-  (let [out (chan)]
-    (go (let [movies (<! (yts params))
-              summaries (<! (trakt-summaries (map :imdb movies)))]
-          (>! out (mapv (fn [m s]
-                          (assoc m :summary s))
-                        movies summaries))))
+  (let [out (chan)
+        y (yts params)
+        k (kickass params)]
+    (go (let [movies (<! y)
+              shows (<! k)]
+          ;;summaries (<! (trakt-summaries (map :imdb movies)))
+          (>! out (vec (concat movies shows)))))
     out))

@@ -17,21 +17,6 @@
 
 (def app-state (atom {:movies [] :idx nil}))
 
-(defn tick [ms]
-  (let [out (chan (sliding-buffer 1))]
-    (go (while true 
-          (<! (timeout ms))
-          (>! out :tick)))
-    out))
-
-(defn throttle [t c]
-  (let [out (chan)]
-    (go (loop [throttled true]
-          (if throttled
-            (do (<! t) (recur false))
-            (do (>! out (<! c)) (recur true)))))
-    out))
-
 (defn torrent->f [torrent]
   (let [ch (chan)
         engine (t torrent)]
@@ -78,15 +63,43 @@
                                     (:title movie)))
                           (:movies data))))))
 
-(om/root
-  (fn [app owner]
-    (reify
+(defn filter-search [all-input]
+  (let [filtered-input (chan)]
+    (go
+     (loop [input-val (<! all-input)
+            countdown (timeout 1000)]
+       (let [[v c] (alts! [all-input countdown] {:priority true})]
+         (condp = c
+           all-input (recur v (timeout 1000))
+           countdown (put! filtered-input input-val)))))
+    filtered-input))
+
+(defn search-box [app owner]
+  (reify
      om/IInitState
      (init-state [_]
        {:text ""
         :query (chan (sliding-buffer 1))})
-      ;om/IWillMount
-      #_(will-mount [_]
+    om/IWillMount
+    (will-mount [_]
+      ;; watch the search box
+      (go (while true
+            (let [state (om/get-state owner)
+                  query (<! (filter-search (:query state)))
+                  movies (<! (search {:limit 20 :sort "seeds" :query query}))]
+              (om/update! app :movies movies)))))
+    om/IRenderState
+    (render-state [_ state]
+          (dom/input #js {:type "text"
+                          :value (:text state)
+                          :onChange (fn [e]
+                                        (om/set-state! owner :text (.. e -target -value))
+                                        (put! (:query state) (.. e -target -value)))}))))
+(om/root
+  (fn [app owner]
+    (reify
+      om/IWillMount
+      (will-mount [_]
         ;; start the server
         (go (let [server (.createServer http)
                   magnet->f (atom {})]
@@ -100,22 +113,12 @@
                          (go (let [f (<! (torrent->f magnet))]
                                (swap! magnet->f assoc magnet f)
                                ((handle-f f) req res)))))))
-              (.listen server 8080)))
-        ;; watch the search box
-        #_(let [state (om/get-state owner)
-              query (throttle (tick 2000) (:query state))]
-          (go (while true
-                (let [movies (<! (search {:limit 20 :sort "seeds" :query (<! query)}))]
-                  (om/update! app :movies movies))))))
+              (.listen server 8080))))
       om/IRenderState
       (render-state [this state]
         (dom/div nil
-          (dom/input #js {:type "text"
-                          :value (:text state)
-                          :onChange (fn [e]
-                                      (om/set-state! owner :text (.. e -target -value))
-                                      (put! (:query state) (.. e -target -value)))})
-          #_(om/build video-widget app)
-          #_(om/build movie-list app)))))
+          (om/build search-box app)
+          (om/build video-widget app)
+          (om/build movie-list app)))))
   app-state
   {:target (. js/document (getElementById "app"))})
